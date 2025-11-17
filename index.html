@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <title>Finger Counter</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: black; }
-  canvas { display: block; position: absolute; top: 0; left: 0; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: black; }
+  canvas { display: block; position: absolute; top: 0; left: 0; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
@@ -16,109 +16,183 @@
 <canvas id="canvas"></canvas>
 
 <script>
+// --- Core Setup ---
+
 const videoElement = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 
-// Set canvas to fullscreen
+// --- Window/Canvas Management (Mirrors Python's fullscreen setup) ---
+
+// Set canvas to fullscreen and handle resizing
 function resizeCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
 }
 window.addEventListener('resize', resizeCanvas);
 resizeCanvas();
 
-// Landmarks
+// --- FingerCounter Logic (Direct conversion from Python) ---
+
+/**
+ * Calculates the Euclidean distance between two MediaPipe landmark points.
+ * @param {{x: number, y: number}} p1 - First point.
+ * @param {{x: number, y: number}} p2 - Second point.
+ * @returns {number} The distance.
+ */
+function distance(p1, p2) {
+    // Matches the Python `math.hypot(p1.x - p2.x, p1.y - p2.y)`
+    return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+}
+
+// Predefine index sets (Matches Python's `self.tips` and `self.pips`)
 const tips = [4, 8, 12, 16, 20];
 const pips = [3, 6, 10, 14, 18];
 
-function distance(p1, p2) {
-  return Math.hypot(p1.x - p2.x, p1.y - p2.y);
-}
-
+/**
+ * Determines which fingers are up based on landmark positions.
+ * The logic is an exact copy of the Python `count_fingers` method.
+ * @param {Array<{x: number, y: number, z: number}>} lm - Array of 21 hand landmarks.
+ * @returns {number} The total count of fingers up (0-5).
+ */
 function countFingers(lm) {
-  let fingersUp = [];
-  const wrist = lm[0];
+    let fingersUp = [];
+    const wrist = lm[0];
 
-  // Thumb
-  const thumbTip = lm[tips[0]].x;
-  const thumbPip = lm[pips[0]].x;
-  const thumbMcp = lm[2].x;
-  const wristX = wrist.x;
+    // --- Thumb Logic (X-axis check for hand orientation) ---
+    // Get X coordinates (lm coordinates are normalized 0.0 to 1.0)
+    const thumbTip = lm[tips[0]].x;
+    const thumbPip = lm[pips[0]].x;
+    const thumbMcp = lm[2].x; // Metacarpophalangeal joint (base of thumb)
+    const wristX = lm[0].x;
 
-  if (thumbMcp > wristX) {
-    fingersUp.push(thumbTip > thumbPip ? 1 : 0);
-  } else {
-    fingersUp.push(thumbTip < thumbPip ? 1 : 0);
-  }
+    // Check if the hand is facing right (thumb MCP > wrist X)
+    if (thumbMcp > wristX) {
+        // Hand is pointing right: Tip is greater than PIP when up
+        fingersUp.push(thumbTip > thumbPip ? 1 : 0);
+    } else {
+        // Hand is pointing left: Tip is less than PIP when up
+        fingersUp.push(thumbTip < thumbPip ? 1 : 0);
+    }
 
-  // Other fingers
-  for (let i = 1; i < 5; i++) {
-    const tip = lm[tips[i]];
-    const pip = lm[pips[i]];
-    fingersUp.push(distance(tip, wrist) > distance(pip, wrist) ? 1 : 0);
-  }
+    // --- Other 4 fingers (Index, Middle, Ring, Pinky) ---
+    // Check if the distance from the fingertip to the wrist is greater
+    // than the distance from the PIP joint to the wrist (means the finger is straight).
+    for (let i = 1; i < 5; i++) {
+        const tip = lm[tips[i]]; // Fingertip landmark
+        const pip = lm[pips[i]]; // PIP landmark (middle joint)
+        
+        const tipToWristDist = distance(tip, wrist);
+        const pipToWristDist = distance(pip, wrist);
 
-  return fingersUp.reduce((a, b) => a + b, 0);
+        fingersUp.push(tipToWristDist > pipToWristDist ? 1 : 0);
+    }
+
+    // Return the sum of all fingers that are '1' (up)
+    return fingersUp.reduce((a, b) => a + b, 0);
 }
 
-// MediaPipe Hands setup
-const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+// --- MediaPipe and Rendering Setup ---
+
+// Matches Python's `self.hands` initialization
+const hands = new Hands({locateFile: (file) => 
+    `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+
+// Matches Python's `hands` options
 hands.setOptions({
-  maxNumHands: 2,
-  modelComplexity: 1,
-  minDetectionConfidence: 0.7,
-  minTrackingConfidence: 0.5
+    // Python default maxNumHands is 2, modelComplexity is 1
+    maxNumHands: 2, 
+    modelComplexity: 1, 
+    minDetectionConfidence: 0.7, // Matches Python
+    minTrackingConfidence: 0.5  // Matches Python
 });
 
 hands.onResults(results => {
-  ctx.save();
-  // Mirror and scale video to fullscreen
-  ctx.translate(canvas.width, 0);
-  ctx.scale(-1, 1);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+    ctx.save();
+    
+    // Clear canvas and prepare for drawing
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  let totalFingers = 0;
-  let handCount = 0;
+    // Flip the image horizontally to match the standard webcam feed
+    // and the Python `cv2.flip(frame, 1)` call
+    ctx.translate(canvas.width, 0);
+    ctx.scale(-1, 1);
+    
+    // Draw the video frame onto the canvas
+    // results.image is a standard HTMLImageElement (or similar)
+    ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+    
+    // Reset the transform so text drawing isn't mirrored
+    ctx.restore(); 
+    ctx.save(); // Save again for drawing text
 
-  if (results.multiHandLandmarks) {
-    handCount = results.multiHandLandmarks.length;
+    let totalFingers = 0;
+    let handCount = 0;
 
-    for (const landmarks of results.multiHandLandmarks) {
-      // Draw white connections
-      drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: 'white', lineWidth: 2});
-      // Draw red landmarks
-      drawLandmarks(ctx, landmarks, {color: 'red', lineWidth: 2, radius: 5});
+    if (results.multiHandLandmarks) {
+        handCount = results.multiHandLandmarks.length;
 
-      const fingers = countFingers(landmarks);
-      totalFingers += fingers;
+        for (const landmarks of results.multiHandLandmarks) {
+            
+            // Draw landmarks (Matches Python's `self.draw.draw_landmarks`)
+            drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#80FFFF', lineWidth: 4}); // Light blue
+            drawLandmarks(ctx, landmarks, {color: '#FF00FF', lineWidth: 2, radius: 5}); // Magenta
 
-      // Draw green finger count near the center of the hand
-      const cx = landmarks[9].x * canvas.width;
-      const cy = landmarks[9].y * canvas.height;
-      ctx.fillStyle = 'green';
-      ctx.font = `${Math.round(canvas.height/25)}px Arial`;
-      ctx.fillText(fingers, cx - 30, cy - 30);
-    }
-  }
+            const fingers = countFingers(landmarks);
+            totalFingers += fingers;
 
-  // Draw total count and hand count at top-left (blue text)
-  ctx.fillStyle = 'blue';
-  ctx.font = `${Math.round(canvas.height/30)}px Arial`;
-  ctx.fillText(`Finger Count: ${totalFingers}`, 10, 40);
-  ctx.fillText(`Hands: ${handCount}`, 10, 80);
+            // Draw per-hand count (Matches Python's `cv2.putText` near landmark 9)
+            // Landmark 9 is the middle finger MCP joint (normalized 0.0 to 1.0)
+            // Scaling the coordinates to screen size
+            const cx = landmarks[9].x * canvas.width;
+            const cy = landmarks[9].y * canvas.height;
+            
+            // Text style matching Python's green (0, 255, 0)
+            ctx.fillStyle = 'lime'; 
+            ctx.font = `bold ${Math.round(canvas.height/25)}px Arial`;
+            
+            // Position matches Python's (cx - 30, cy - 30) offset
+            ctx.fillText(String(fingers), cx - 30, cy - 30);
+        }
+    }
+    
+    // --- Draw Total Counts (Matches Python's top-left text) ---
+    
+    // Text style matching Python's blue (255, 0, 0) for the main stats
+    ctx.fillStyle = 'cyan'; 
+    ctx.font = `bold ${Math.round(canvas.height/30)}px Arial`;
 
-  ctx.restore();
+    // Finger Count: (10, 30) position
+    ctx.fillText(`Finger Count: ${totalFingers}`, 10, 40); 
+
+    // Hands: (10, 70) position
+    ctx.fillText(`Hands: ${handCount}`, 10, 80); 
+
+    ctx.restore();
 });
 
-// Camera setup
+// --- Camera Initialization (Mirrors Python's `cv2.VideoCapture` setup) ---
+
+// Matches Python's resolution setting
+const CAMERA_WIDTH = 1280;
+const CAMERA_HEIGHT = 720;
+
+// Initializes the camera to feed frames to the Hands model
 const camera = new Camera(videoElement, {
-  onFrame: async () => await hands.send({image: videoElement}),
-  width: 1280,
-  height: 720
+    onFrame: async () => {
+        // This sends the current frame to the MediaPipe hands processor
+        await hands.send({image: videoElement});
+    },
+    width: CAMERA_WIDTH,  // Matches Python's 1280
+    height: CAMERA_HEIGHT // Matches Python's 720
 });
+
+// Start the camera stream
 camera.start();
+
+// Note: The ESC key exit (cv2.waitKey(1) & 0xFF == 27) is not applicable to a web page.
+// The user closes the tab to stop the script.
 </script>
 </body>
 </html>
