@@ -3,20 +3,15 @@
 <head>
   <meta charset="UTF-8">
   <title>Finger Counter</title>
-  <style>
-    body { margin: 0; background: #000; display: flex; justify-content: center; }
-    canvas { width: 100vw; height: 100vh; }
-  </style>
-
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
-
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+  <script src="script.js" defer></script>
 </head>
-<body>
-  <video id="video" playsinline style="display:none;"></video>
-  <canvas id="output"></canvas>
 
-  <script src="script.js"></script>
+<body>
+  <h1>Finger Counter</h1>
+  <video class="input_video" autoplay></video>
+  <canvas class="output_canvas"></canvas>
+  <h2 id="count">Fingers: 0</h2>
 </body>
 </html>
