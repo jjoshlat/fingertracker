@@ -1,134 +1,124 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Finger Counter</title>
-  <style>
-    html, body {
-      margin: 0;
-      padding: 0;
-      overflow: hidden;
-      background: black;
-      font-family: sans-serif;
-    }
-    #canvas {
-      display: block;
-      position: absolute;
-      top: 0;
-      left: 0;
-    }
-  </style>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<meta charset="UTF-8">
+<title>Finger Counter</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: black; }
+  canvas { display: block; position: absolute; top: 0; left: 0; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 </head>
 <body>
-  <video id="video" autoplay playsinline style="display:none;"></video>
-  <canvas id="canvas"></canvas>
+<video id="video" autoplay playsinline style="display:none;"></video>
+<canvas id="canvas"></canvas>
 
-  <script>
-    const videoElement = document.getElementById('video');
-    const canvasElement = document.getElementById('canvas');
-    const ctx = canvasElement.getContext('2d');
+<script>
+const videoElement = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
 
-    const tips = [4, 8, 12, 16, 20];
-    const pips = [3, 6, 10, 14, 18];
+// Set canvas to fullscreen
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
 
-    function distance(p1, p2) {
-      return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+// Landmarks
+const tips = [4, 8, 12, 16, 20];
+const pips = [3, 6, 10, 14, 18];
+
+function distance(p1, p2) {
+  return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+}
+
+function countFingers(lm) {
+  let fingersUp = [];
+  const wrist = lm[0];
+
+  // Thumb
+  const thumbTip = lm[tips[0]].x;
+  const thumbPip = lm[pips[0]].x;
+  const thumbMcp = lm[2].x;
+  const wristX = wrist.x;
+
+  if (thumbMcp > wristX) {
+    fingersUp.push(thumbTip > thumbPip ? 1 : 0);
+  } else {
+    fingersUp.push(thumbTip < thumbPip ? 1 : 0);
+  }
+
+  // Other fingers
+  for (let i = 1; i < 5; i++) {
+    const tip = lm[tips[i]];
+    const pip = lm[pips[i]];
+    fingersUp.push(distance(tip, wrist) > distance(pip, wrist) ? 1 : 0);
+  }
+
+  return fingersUp.reduce((a, b) => a + b, 0);
+}
+
+// MediaPipe Hands setup
+const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+hands.setOptions({
+  maxNumHands: 2,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.7,
+  minTrackingConfidence: 0.5
+});
+
+hands.onResults(results => {
+  ctx.save();
+  // Mirror and scale video to fullscreen
+  ctx.translate(canvas.width, 0);
+  ctx.scale(-1, 1);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
+
+  let totalFingers = 0;
+  let handCount = 0;
+
+  if (results.multiHandLandmarks) {
+    handCount = results.multiHandLandmarks.length;
+
+    for (const landmarks of results.multiHandLandmarks) {
+      // Draw white connections
+      drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: 'white', lineWidth: 2});
+      // Draw red landmarks
+      drawLandmarks(ctx, landmarks, {color: 'red', lineWidth: 2, radius: 5});
+
+      const fingers = countFingers(landmarks);
+      totalFingers += fingers;
+
+      // Draw green finger count near the center of the hand
+      const cx = landmarks[9].x * canvas.width;
+      const cy = landmarks[9].y * canvas.height;
+      ctx.fillStyle = 'green';
+      ctx.font = `${Math.round(canvas.height/25)}px Arial`;
+      ctx.fillText(fingers, cx - 30, cy - 30);
     }
+  }
 
-    function countFingers(landmarks) {
-      let fingersUp = [];
-      const wrist = landmarks[0];
+  // Draw total count and hand count at top-left (blue text)
+  ctx.fillStyle = 'blue';
+  ctx.font = `${Math.round(canvas.height/30)}px Arial`;
+  ctx.fillText(`Finger Count: ${totalFingers}`, 10, 40);
+  ctx.fillText(`Hands: ${handCount}`, 10, 80);
 
-      // Thumb
-      const thumbTip = landmarks[tips[0]].x;
-      const thumbPip = landmarks[pips[0]].x;
-      const thumbMcp = landmarks[2].x;
-      const wristX = wrist.x;
-      if (thumbMcp > wristX) {
-        fingersUp.push(thumbTip > thumbPip ? 1 : 0);
-      } else {
-        fingersUp.push(thumbTip < thumbPip ? 1 : 0);
-      }
+  ctx.restore();
+});
 
-      // Other fingers
-      for (let i = 1; i < 5; i++) {
-        const tip = landmarks[tips[i]];
-        const pip = landmarks[pips[i]];
-        fingersUp.push(distance(tip, wrist) > distance(pip, wrist) ? 1 : 0);
-      }
-
-      return fingersUp.reduce((a, b) => a + b, 0);
-    }
-
-    const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-    hands.setOptions({
-      maxNumHands: 2,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.7,
-      minTrackingConfidence: 0.5
-    });
-
-    hands.onResults(results => {
-      // Resize canvas to full screen
-      canvasElement.width = window.innerWidth;
-      canvasElement.height = window.innerHeight;
-
-      // Draw video frame full screen
-      const aspect = videoElement.videoWidth / videoElement.videoHeight;
-      let drawWidth = canvasElement.width;
-      let drawHeight = drawWidth / aspect;
-      if(drawHeight > canvasElement.height) {
-        drawHeight = canvasElement.height;
-        drawWidth = drawHeight * aspect;
-      }
-      const dx = (canvasElement.width - drawWidth) / 2;
-      const dy = (canvasElement.height - drawHeight) / 2;
-      ctx.drawImage(results.image, dx, dy, drawWidth, drawHeight);
-
-      let totalFingers = 0;
-      let handCount = 0;
-
-      if (results.multiHandLandmarks) {
-        handCount = results.multiHandLandmarks.length;
-
-        for (const landmarks of results.multiHandLandmarks) {
-          // Draw landmarks and connections
-          drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 2});
-          drawLandmarks(ctx, landmarks, {color: '#FF0000', lineWidth: 1});
-
-          const fingers = countFingers(landmarks);
-          totalFingers += fingers;
-
-          // Draw finger count per hand in green near center of hand
-          const cx = landmarks[9].x * drawWidth + dx;
-          const cy = landmarks[9].y * drawHeight + dy;
-          ctx.fillStyle = 'rgb(0,255,0)';
-          ctx.font = '32px Arial';
-          ctx.fillText(fingers, cx - 30, cy - 30);
-        }
-      }
-
-      // Draw total counts top-left in blue
-      ctx.fillStyle = 'rgb(255,0,0)'; // OpenCV uses BGR, original text color is red
-      ctx.font = '32px Arial';
-      ctx.fillText(`Finger Count: ${totalFingers}`, 10, 40);
-      ctx.fillText(`Hands: ${handCount}`, 10, 80);
-    });
-
-    const camera = new Camera(videoElement, {
-      onFrame: async () => await hands.send({image: videoElement}),
-      width: 1280,
-      height: 720
-    });
-    camera.start();
-
-    window.addEventListener('resize', () => {
-      canvasElement.width = window.innerWidth;
-      canvasElement.height = window.innerHeight;
-    });
-  </script>
+// Camera setup
+const camera = new Camera(videoElement, {
+  onFrame: async () => await hands.send({image: videoElement}),
+  width: 1280,
+  height: 720
+});
+camera.start();
+</script>
 </body>
 </html>
