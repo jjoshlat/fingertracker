@@ -225,7 +225,7 @@ hands.onResults(results => {
                 
                 // Calculate the dynamic radius based on hand scale
                 const handScale = calculateHandScale(landmarks);
-                const baseRadius = Math.max(3, Math.min(10, handScale * 50)); 
+                const baseRadius = Math.max(3, Math.min(10, handScale * 25)); 
                 
                 // 4. Draw Hand Visualization (White Lines, Dynamic Red Points)
                 ctx.save();
