@@ -14,7 +14,7 @@ html, body {
     justify-content: center;
     align-items: center;
 }
- 
+  
 /* Keep canvas minimal and let JS/flexbox handle sizing */
 canvas { 
     display: block; 
@@ -25,7 +25,7 @@ canvas {
     width: 100%; 
     height: 100%;
 }
- 
+  
 /* No changes to button style */
 #fullscreen-btn {
     position: absolute;
@@ -53,7 +53,7 @@ canvas {
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 </head>
 <body>
-<video id="video" autoplay playsinline style="display:none;" width="640" height="480"></video>
+<video id="video" autoplay playsinline style="display:none;" width="1280" height="720"></video>
 <canvas id="canvas"></canvas>
 
 <button id="fullscreen-btn">Go Fullscreen</button>
@@ -74,7 +74,7 @@ const tips = [4, 8, 12, 16, 20];
 const pips = [3, 6, 10, 14, 18];
 const HAND_CONNECTIONS = window.HAND_CONNECTIONS; 
 
-// --- Fullscreen and UI Management (Unchanged) ---
+// --- Fullscreen and UI Management ---
 
 function toggleFullscreen() {
     if (!document.fullscreenElement) {
@@ -117,7 +117,7 @@ window.addEventListener('resize', () => {
     resizeTimeout = setTimeout(resizeCanvas, 100); 
 });
 
-// --- FingerCounter Logic (Unchanged) ---
+// --- FingerCounter Logic ---
 
 function distance(p1, p2) {
     return Math.hypot(p1.x - p2.x, p1.y - p2.y);
@@ -153,7 +153,7 @@ function countFingers(lm) {
     return fingersUp.reduce((a, b) => a + b, 0);
 }
 
-// --- MediaPipe and Rendering Setup (FINAL CHANGES) ---
+// --- MediaPipe and Rendering Setup ---
 
 const hands = new Hands({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
@@ -193,7 +193,6 @@ hands.onResults(results => {
             
             // Set font and color for hand-level count (Green: #00FF00)
             ctx.fillStyle = '#00FF00'; 
-            // FINAL ADJUSTMENT: 75% of 100px is 75px, using 'Arial'
             ctx.font = `bold 75px Arial`; 
 
             for (const landmarks of results.multiHandLandmarks) {
@@ -235,7 +234,6 @@ hands.onResults(results => {
         
         // Set font for total count (Blue: #0000FF)
         ctx.fillStyle = '#0000FF'; 
-        // FINAL ADJUSTMENT: Larger font size (30px)
         ctx.font = `bold 30px Arial`; 
 
         // Requested positions (10, 30) and (10, 70)
@@ -245,13 +243,14 @@ hands.onResults(results => {
     }); // End requestAnimationFrame
 });
 
-// --- Camera Initialization and Program Start (Unchanged) ---
+// --- Camera Initialization and Program Start ---
 
 const initCamera = () => {
     camera = new Camera(videoElement, {
         onFrame: async () => {
             await hands.send({image: videoElement});
         },
+        // The width/height are read from the HTML <video> element's attributes (now 1280x720)
         width: videoElement.width, 
         height: videoElement.height,
         mirrored: false
