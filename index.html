@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Finger Counter Final</title>
+<title>Finger Counter Final - Auto Start</title>
 <style>
 /* Use flexbox for simple, performant centering and layout */
 html, body { 
@@ -14,7 +14,7 @@ html, body {
     justify-content: center;
     align-items: center;
 }
-  
+ 
 /* Keep canvas minimal and let JS/flexbox handle sizing */
 canvas { 
     display: block; 
@@ -25,7 +25,7 @@ canvas {
     width: 100%; 
     height: 100%;
 }
-  
+ 
 /* No changes to button style */
 #fullscreen-btn {
     position: absolute;
@@ -71,10 +71,19 @@ let totalFingers = 0;
 let handCount = 0;
 
 const tips = [4, 8, 12, 16, 20];
-const pips = [3, 6, 10, 14, 18];
+const pips = [3, 6, 10, 14, 18]; 
 const HAND_CONNECTIONS = window.HAND_CONNECTIONS; 
 
-// --- Fullscreen and UI Management ---
+// NEW: Image variable and pre-loading
+const middleFingerImage = new Image();
+middleFingerImage.src = 'middlefinger.jpg';
+let imageLoaded = false;
+middleFingerImage.onload = () => {
+    imageLoaded = true;
+};
+
+
+// --- Fullscreen and UI Management (Unchanged) ---
 
 function toggleFullscreen() {
     if (!document.fullscreenElement) {
@@ -117,26 +126,37 @@ window.addEventListener('resize', () => {
     resizeTimeout = setTimeout(resizeCanvas, 100); 
 });
 
-// --- FingerCounter Logic ---
+// --- FingerCounter Logic (MODIFIED to detect the gesture) ---
 
 function distance(p1, p2) {
     return Math.hypot(p1.x - p2.x, p1.y - p2.y);
 }
 
+/**
+ * Counts fingers up and detects the 'middle finger' gesture.
+ * @param {Array<Object>} lm - The hand landmarks.
+ * @returns {{fingersUp: number, isMiddleFinger: boolean}}
+ */
 function countFingers(lm) {
-    const fingersUp = []; 
+    let fingersUp = 0; 
+    const fingerStates = [false, false, false, false, false]; // [Thumb, Index, Middle, Ring, Pinky]
     const wrist = lm[0];
     
     // Thumb logic
     const thumbTipX = lm[tips[0]].x;
     const thumbPipX = lm[pips[0]].x;
-    const thumbMcpX = lm[2].x;
     const wristX = lm[0].x;
 
-    if (thumbMcpX > wristX) {
-        fingersUp.push(thumbTipX > thumbPipX ? 1 : 0);
+    if (lm[2].x > wristX) {
+        if (thumbTipX > thumbPipX) {
+            fingersUp++;
+            fingerStates[0] = true;
+        }
     } else {
-        fingersUp.push(thumbTipX < thumbPipX ? 1 : 0);
+        if (thumbTipX < thumbPipX) {
+            fingersUp++;
+            fingerStates[0] = true;
+        }
     }
 
     // Other 4 fingers
@@ -147,20 +167,33 @@ function countFingers(lm) {
         const tipToWristDist = distance(tip, wrist);
         const pipToWristDist = distance(pip, wrist);
 
-        fingersUp.push(tipToWristDist > pipToWristDist ? 1 : 0);
+        if (tipToWristDist > pipToWristDist) {
+            fingersUp++;
+            fingerStates[i] = true;
+        }
     }
+    
+    // NEW LOGIC: Check for the 'middle finger' gesture: ONLY the middle finger is up (index = 2)
+    // The gesture is considered a 'middle finger' if only the middle finger (index 2) is up.
+    // The condition is: All fingers are down EXCEPT the middle finger.
+    const isMiddleFinger = (
+        !fingerStates[0] && // Thumb down
+        !fingerStates[1] && // Index down
+        fingerStates[2] &&  // Middle UP
+        !fingerStates[3] && // Ring down
+        !fingerStates[4]    // Pinky down
+    );
 
-    return fingersUp.reduce((a, b) => a + b, 0);
+    return { fingersUp, isMiddleFinger };
 }
 
-// --- Function to calculate a measure of hand size for scaling dots ---
 function calculateHandScale(landmarks) {
     const p0 = landmarks[0];
     const p5 = landmarks[5];
     return distance(p0, p5); 
 }
 
-// --- MediaPipe and Rendering Setup (Using the correct aspect ratio for drawing) ---
+// --- MediaPipe and Rendering Setup (MODIFIED to use the image) ---
 
 const hands = new Hands({
     locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
@@ -169,7 +202,9 @@ const hands = new Hands({
 hands.setOptions({
     modelComplexity: 0, 
     minDetectionConfidence: 0.6, 
-    minTrackingConfidence: 0.4
+    minTrackingConfidence: 0.4,
+    // Max hands set high to accommodate many users/hands
+    maxNumHands: 21 
 });
 
 hands.onResults(results => {
@@ -207,20 +242,41 @@ hands.onResults(results => {
         ctx.scale(-1, 1);
         
         // 3. Draw the video frame
-        const flippedOffsetX = (canvas.width - offsetX) - drawWidth;
-        ctx.drawImage(results.image, flippedOffsetX, offsetY, drawWidth, drawHeight); 
+        // NOTE: We do NOT draw the video frame here anymore, 
+        // as we will draw the image or the video on a per-hand basis later.
         
         totalFingers = 0;
         handCount = 0;
         
         if (results.multiHandLandmarks) {
+            
+            // NEW: Separate landmarks into two groups: those with the gesture, and the rest.
+            const handsToCensor = [];
+            const handsToDraw = [];
+
+            for (const landmarks of results.multiHandLandmarks) {
+                const { fingersUp, isMiddleFinger } = countFingers(landmarks);
+                
+                if (isMiddleFinger && imageLoaded) {
+                    handsToCensor.push({ landmarks, fingersUp });
+                } else {
+                    handsToDraw.push({ landmarks, fingersUp });
+                }
+            }
+
+            // A. Draw the **uncensored** video/image
+            const flippedOffsetX = (canvas.width - offsetX) - drawWidth;
+            ctx.drawImage(results.image, flippedOffsetX, offsetY, drawWidth, drawHeight); 
+
             handCount = results.multiHandLandmarks.length;
             
             // Set font and color for hand-level count (Green: #00FF00)
             ctx.fillStyle = '#00FF00'; 
             ctx.font = `bold 56px Arial`; 
 
-            for (const landmarks of results.multiHandLandmarks) {
+            // B. Draw hands that are NOT censored (regular drawing)
+            for (const { landmarks, fingersUp } of handsToDraw) {
+                totalFingers += fingersUp;
                 
                 // Calculate the dynamic radius based on hand scale
                 const handScale = calculateHandScale(landmarks);
@@ -249,9 +305,6 @@ hands.onResults(results => {
                 ctx.restore();
                 ctx.save(); 
 
-                const fingers = countFingers(landmarks);
-                totalFingers += fingers;
-
                 // 5. Text Position: Center of the palm (Landmark 9)
                 const cx = (landmarks[9].x * drawWidth) + offsetX;
                 const cy = (landmarks[9].y * drawHeight) + offsetY;
@@ -261,11 +314,71 @@ hands.onResults(results => {
                 ctx.scale(-1, 1); 
                 
                 // Draw text 
-                ctx.fillText(String(fingers), -30, -30);
+                ctx.fillText(String(fingersUp), -30, -30);
 
                 // Restore the state
                 ctx.restore();
             }
+
+            // C. Draw the hands that ARE censored (draw the image over the hand area)
+            for (const { landmarks } of handsToCensor) {
+                // The 'middle finger' gesture means fingersUp is 1, so count it toward the total.
+                totalFingers += 1; 
+
+                // Determine the hand bounding box (approximate)
+                let minX = Infinity, minY = Infinity;
+                let maxX = -Infinity, maxY = -Infinity;
+
+                for (const point of landmarks) {
+                    minX = Math.min(minX, point.x);
+                    minY = Math.min(minY, point.y);
+                    maxX = Math.max(maxX, point.x);
+                    maxY = Math.max(maxY, point.y);
+                }
+
+                // Convert normalized coordinates [0, 1] to canvas coordinates
+                const x_norm = minX;
+                const y_norm = minY;
+                const width_norm = maxX - minX;
+                const height_norm = maxY - minY;
+
+                const drawX = (x_norm * drawWidth) + offsetX;
+                const drawY = (y_norm * drawHeight) + offsetY;
+                const rectWidth = width_norm * drawWidth;
+                const rectHeight = height_norm * drawHeight;
+
+                // NEW: Draw the image over the hand area
+                ctx.drawImage(
+                    middleFingerImage, 
+                    drawX, 
+                    drawY, 
+                    rectWidth, 
+                    rectHeight
+                );
+
+                // You might also want to draw a text overlay that's censored, or nothing.
+                // Let's draw 'X' to indicate it's censored.
+                ctx.save();
+                ctx.fillStyle = '#FF0000'; // Red color
+                ctx.font = `bold ${rectHeight * 0.4}px Arial`; 
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                
+                // Text position (approximate center of the censored area)
+                const textCenterX = drawX + rectWidth / 2;
+                const textCenterY = drawY + rectHeight / 2;
+
+                // Temporary anti-flip transformation for text
+                ctx.translate(textCenterX, textCenterY);
+                ctx.scale(-1, 1); 
+
+                ctx.fillText('X', 0, 0); 
+                ctx.restore();
+            }
+        } else {
+            // If no hands, draw the video frame as the background
+            const flippedOffsetX = (canvas.width - offsetX) - drawWidth;
+            ctx.drawImage(results.image, flippedOffsetX, offsetY, drawWidth, drawHeight);
         }
         
         // 6. Restore the canvas transform (undo the main video flip)
@@ -278,68 +391,64 @@ hands.onResults(results => {
         ctx.font = `bold 30px Arial`; 
 
         // CALCULATE POSITION: 
-        // We set the X position to be 20 pixels from the left edge of the video area (offsetX).
-        const textX = offsetX + 20; // <<< MODIFIED: Changed from top-right calculation
-        const textY1 = offsetY + 30; // Top margin + vertical offset
-        const textY2 = offsetY + 70; // Top margin + vertical offset
+        const textX = offsetX + 20; 
+        const textY1 = offsetY + 30; 
+        const textY2 = offsetY + 70; 
 
         // Draw the text at the new calculated coordinates
-        ctx.fillText(`Finger Count: ${totalFingers}`, textX, textY1); 
-        ctx.fillText(`Hands: ${handCount}`, textX, textY2); 
+        ctx.fillText(`Total Fingers: ${totalFingers}`, textX, textY1); 
+        ctx.fillText(`Hands Detected: ${handCount}`, textX, textY2); 
 
     }); // End requestAnimationFrame
 });
 
-// --- Camera Initialization and Program Start ---
+// --- Camera Initialization and Program Start (Unchanged) ---
 
 const initCamera = async () => {
-    // 1. Request the camera stream using constraints that prefer HD resolution
-    const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-            width: { ideal: 1280, min: 640 },
-            height: { ideal: 720, min: 480 },
-            facingMode: 'user'
-        }
-    });
-    
-    // 2. Attach stream to video element
-    videoElement.srcObject = stream;
-    
-    // Wait for the video stream to load metadata and set its intrinsic size
-    await new Promise((resolve) => {
-        videoElement.onloadedmetadata = () => {
-            // 3. Set the video element's attributes to the camera's actual resolution
-            videoElement.width = videoElement.videoWidth;
-            videoElement.height = videoElement.videoHeight;
-            resolve(true);
-        };
-    });
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                width: { ideal: 1280, min: 640 },
+                height: { ideal: 720, min: 480 },
+                facingMode: 'user'
+            }
+        });
+        
+        videoElement.srcObject = stream;
+        
+        await new Promise((resolve) => {
+            videoElement.onloadedmetadata = () => {
+                videoElement.width = videoElement.videoWidth;
+                videoElement.height = videoElement.videoHeight;
+                resolve(true);
+            };
+        });
 
-    // 4. Initialize MediaPipe Camera utility
-    camera = new Camera(videoElement, {
-        onFrame: async () => {
-            await hands.send({image: videoElement});
-        },
-        width: videoElement.width, 
-        height: videoElement.height,
-        mirrored: false
-    });
-    camera.start();
+        camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: videoElement.width, 
+            height: videoElement.height,
+            mirrored: false
+        });
+        camera.start();
+    } catch (e) {
+        // Log a more informative message if camera access fails.
+        console.error("Camera initialization failed. The browser likely blocked camera access until permission is granted.", e);
+        // You could add a UI element here to prompt the user to refresh or click
+    }
 };
 
 // Initial setup
 resizeCanvas();
 
-// Starter function for first click to handle fullscreen/permissions
-document.addEventListener('click', function starter() {
-    if (!document.fullscreenElement) {
-        toggleFullscreen(); 
-    }
-    initCamera().catch(e => console.error("Camera initialization failed:", e));
-    document.removeEventListener('click', starter);
-}, {once: true});
+// 👇 NEW: Start the camera as soon as the window and its resources are loaded.
+window.onload = () => {
+    initCamera();
+    handleFullscreenChange();
+};
 
-handleFullscreenChange();
 </script>
 </body>
 </html>
