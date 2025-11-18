@@ -2,197 +2,276 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Finger Counter</title>
+<title>Finger Counter Final</title>
 <style>
-  html, body { margin: 0; height: 100%; overflow: hidden; background: black; }
-  canvas { display: block; position: absolute; top: 0; left: 0; }
+/* Use flexbox for simple, performant centering and layout */
+html, body { 
+    margin: 0; 
+    height: 100%; 
+    overflow: hidden; 
+    background: black; 
+    display: flex; 
+    justify-content: center;
+    align-items: center;
+}
+ 
+/* Keep canvas minimal and let JS/flexbox handle sizing */
+canvas { 
+    display: block; 
+    position: absolute; 
+    top: 0; 
+    left: 0;
+    z-index: 50; 
+    width: 100%; 
+    height: 100%;
+}
+ 
+/* No changes to button style */
+#fullscreen-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 100;
+    padding: 10px 20px;
+    font-size: 16px;
+    background-color: #2ECC71; 
+    color: white;
+    border: none;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: opacity 0.3s;
+    opacity: 1; 
+}
+
+.hidden {
+    display: none !important;
+}
 </style>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 </head>
 <body>
-<video id="video" autoplay playsinline style="display:none;"></video>
+<video id="video" autoplay playsinline style="display:none;" width="640" height="480"></video>
 <canvas id="canvas"></canvas>
+
+<button id="fullscreen-btn">Go Fullscreen</button>
 
 <script>
 // --- Core Setup ---
 
 const videoElement = document.getElementById('video');
 const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
+const ctx = canvas.getContext('2d', { alpha: false }); 
 
-// --- Window/Canvas Management (Mirrors Python's fullscreen setup) ---
+const fullscreenBtn = document.getElementById('fullscreen-btn');
+let camera = null; 
+let totalFingers = 0; 
+let handCount = 0;
 
-// Set canvas to fullscreen and handle resizing
-function resizeCanvas() {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-}
-window.addEventListener('resize', resizeCanvas);
-resizeCanvas();
-
-// --- FingerCounter Logic (Direct conversion from Python) ---
-
-/**
- * Calculates the Euclidean distance between two MediaPipe landmark points.
- * @param {{x: number, y: number}} p1 - First point.
- * @param {{x: number, y: number}} p2 - Second point.
- * @returns {number} The distance.
- */
-function distance(p1, p2) {
-    // Matches the Python `math.hypot(p1.x - p2.x, p1.y - p2.y)`
-    return Math.hypot(p1.x - p2.x, p1.y - p2.y);
-}
-
-// Predefine index sets (Matches Python's `self.tips` and `self.pips`)
 const tips = [4, 8, 12, 16, 20];
 const pips = [3, 6, 10, 14, 18];
+const HAND_CONNECTIONS = window.HAND_CONNECTIONS; 
 
-/**
- * Determines which fingers are up based on landmark positions.
- * The logic is an exact copy of the Python `count_fingers` method.
- * @param {Array<{x: number, y: number, z: number}>} lm - Array of 21 hand landmarks.
- * @returns {number} The total count of fingers up (0-5).
- */
-function countFingers(lm) {
-    let fingersUp = [];
-    const wrist = lm[0];
+// --- Fullscreen and UI Management (Unchanged) ---
 
-    // --- Thumb Logic (X-axis check for hand orientation) ---
-    // Get X coordinates (lm coordinates are normalized 0.0 to 1.0)
-    const thumbTip = lm[tips[0]].x;
-    const thumbPip = lm[pips[0]].x;
-    const thumbMcp = lm[2].x; // Metacarpophalangeal joint (base of thumb)
-    const wristX = lm[0].x;
-
-    // Check if the hand is facing right (thumb MCP > wrist X)
-    if (thumbMcp > wristX) {
-        // Hand is pointing right: Tip is greater than PIP when up
-        fingersUp.push(thumbTip > thumbPip ? 1 : 0);
-    } else {
-        // Hand is pointing left: Tip is less than PIP when up
-        fingersUp.push(thumbTip < thumbPip ? 1 : 0);
-    }
-
-    // --- Other 4 fingers (Index, Middle, Ring, Pinky) ---
-    // Check if the distance from the fingertip to the wrist is greater
-    // than the distance from the PIP joint to the wrist (means the finger is straight).
-    for (let i = 1; i < 5; i++) {
-        const tip = lm[tips[i]]; // Fingertip landmark
-        const pip = lm[pips[i]]; // PIP landmark (middle joint)
-        
-        const tipToWristDist = distance(tip, wrist);
-        const pipToWristDist = distance(pip, wrist);
-
-        fingersUp.push(tipToWristDist > pipToWristDist ? 1 : 0);
-    }
-
-    // Return the sum of all fingers that are '1' (up)
-    return fingersUp.reduce((a, b) => a + b, 0);
+function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(err => {
+            console.error("Fullscreen blocked. User must click to activate.");
+            fullscreenBtn.classList.remove('hidden');
+        });
+    } else if (document.exitFullscreen) {
+        document.exitFullscreen();
+    }
 }
 
-// --- MediaPipe and Rendering Setup ---
+function handleFullscreenChange() {
+    if (document.fullscreenElement) {
+        fullscreenBtn.classList.add('hidden');
+    } else {
+        fullscreenBtn.classList.remove('hidden');
+    }
+    resizeCanvas();
+}
 
-// Matches Python's `self.hands` initialization
-const hands = new Hands({locateFile: (file) => 
-    `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+fullscreenBtn.addEventListener('click', toggleFullscreen);
+document.addEventListener('fullscreenchange', handleFullscreenChange);
+document.addEventListener('webkitfullscreenchange', handleFullscreenChange);
+
+
+function resizeCanvas() {
+    const newWidth = window.innerWidth;
+    const newHeight = window.innerHeight;
+
+    if (canvas.width !== newWidth || canvas.height !== newHeight) {
+        canvas.width = newWidth;
+        canvas.height = newHeight;
+    }
+}
+
+let resizeTimeout;
+window.addEventListener('resize', () => {
+    clearTimeout(resizeTimeout);
+    resizeTimeout = setTimeout(resizeCanvas, 100); 
 });
 
-// Matches Python's `hands` options
+// --- FingerCounter Logic (Unchanged) ---
+
+function distance(p1, p2) {
+    return Math.hypot(p1.x - p2.x, p1.y - p2.y);
+}
+
+function countFingers(lm) {
+    const fingersUp = []; 
+    const wrist = lm[0];
+    
+    // Thumb logic
+    const thumbTipX = lm[tips[0]].x;
+    const thumbPipX = lm[pips[0]].x;
+    const thumbMcpX = lm[2].x;
+    const wristX = lm[0].x;
+
+    if (thumbMcpX > wristX) {
+        fingersUp.push(thumbTipX > thumbPipX ? 1 : 0);
+    } else {
+        fingersUp.push(thumbTipX < thumbPipX ? 1 : 0);
+    }
+
+    // Other 4 fingers
+    for (let i = 1; i < 5; i++) {
+        const tip = lm[tips[i]];
+        const pip = lm[pips[i]];
+        
+        const tipToWristDist = distance(tip, wrist);
+        const pipToWristDist = distance(pip, wrist);
+
+        fingersUp.push(tipToWristDist > pipToWristDist ? 1 : 0);
+    }
+
+    return fingersUp.reduce((a, b) => a + b, 0);
+}
+
+// --- MediaPipe and Rendering Setup (FINAL CHANGES) ---
+
+const hands = new Hands({
+    locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+
 hands.setOptions({
-    // Python default maxNumHands is 2, modelComplexity is 1
-    maxNumHands: 2, 
-    modelComplexity: 1, 
-    minDetectionConfidence: 0.7, // Matches Python
-    minTrackingConfidence: 0.5  // Matches Python
+    maxNumHands: 2, 
+    modelComplexity: 0, 
+    minDetectionConfidence: 0.6, 
+    minTrackingConfidence: 0.4
 });
 
 hands.onResults(results => {
-    ctx.save();
-    
-    // Clear canvas and prepare for drawing
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    requestAnimationFrame(() => {
+        
+        ctx.save();
+        
+        // 1. Clear the canvas with a solid black fill
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, canvas.width, canvas.height); 
+        
+        // 2. Flip the entire drawing space (mirrors video and hand landmarks)
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+        
+        // 3. Draw the video frame (it will be mirrored)
+        ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height); 
+        
+        totalFingers = 0;
+        handCount = 0;
 
-    // Flip the image horizontally to match the standard webcam feed
-    // and the Python `cv2.flip(frame, 1)` call
-    ctx.translate(canvas.width, 0);
-    ctx.scale(-1, 1);
-    
-    // Draw the video frame onto the canvas
-    // results.image is a standard HTMLImageElement (or similar)
-    ctx.drawImage(results.image, 0, 0, canvas.width, canvas.height);
-    
-    // Reset the transform so text drawing isn't mirrored
-    ctx.restore(); 
-    ctx.save(); // Save again for drawing text
+        if (results.multiHandLandmarks) {
+            handCount = results.multiHandLandmarks.length;
+            
+            const cw = canvas.width;
+            const ch = canvas.height;
+            
+            // Set font and color for hand-level count (Green: #00FF00)
+            ctx.fillStyle = '#00FF00'; 
+            // FINAL ADJUSTMENT: 75% of 100px is 75px, using 'Arial'
+            ctx.font = `bold 75px Arial`; 
 
-    let totalFingers = 0;
-    let handCount = 0;
+            for (const landmarks of results.multiHandLandmarks) {
+                
+                // 4. Draw Hand Visualization (White Lines, Red Points)
+                drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#FFFFFF', lineWidth: 4}); 
+                drawLandmarks(ctx, landmarks, {color: '#FF0000', lineWidth: 2, radius: 5}); 
 
-    if (results.multiHandLandmarks) {
-        handCount = results.multiHandLandmarks.length;
+                const fingers = countFingers(landmarks);
+                totalFingers += fingers;
 
-        for (const landmarks of results.multiHandLandmarks) {
-            
-            // Draw landmarks (Matches Python's `self.draw.draw_landmarks`)
-            drawConnectors(ctx, landmarks, HAND_CONNECTIONS, {color: '#80FFFF', lineWidth: 4}); // Light blue
-            drawLandmarks(ctx, landmarks, {color: '#FF00FF', lineWidth: 2, radius: 5}); // Magenta
+                // 5. Text Position: Center of the palm (Landmark 9)
+                const cx = landmarks[9].x * cw;
+                const cy = landmarks[9].y * ch;
+                
+                // CRITICAL FIX: To display the number correctly (un-flipped) on the flipped video,
+                // we apply a temporary anti-flip transformation.
+                
+                ctx.save();
+                
+                // Move origin to the desired text location (cx, cy)
+                ctx.translate(cx, cy);
+                
+                // Flip the drawing context back only for the text
+                ctx.scale(-1, 1); 
+                
+                // Draw text at (-30, -30) relative to the palm (Landmark 9)
+                ctx.fillText(String(fingers), -30, -30);
 
-            const fingers = countFingers(landmarks);
-            totalFingers += fingers;
+                // Restore the state to continue the main loop with the video flip active
+                ctx.restore();
+            }
+        }
+        
+        // 6. Restore the canvas transform (undo the main video flip)
+        ctx.restore(); 
+        
+        // --- Draw Total Counts (Drawn after restore, in the top-left) ---
+        
+        // Set font for total count (Blue: #0000FF)
+        ctx.fillStyle = '#0000FF'; 
+        // FINAL ADJUSTMENT: Larger font size (30px)
+        ctx.font = `bold 30px Arial`; 
 
-            // Draw per-hand count (Matches Python's `cv2.putText` near landmark 9)
-            // Landmark 9 is the middle finger MCP joint (normalized 0.0 to 1.0)
-            // Scaling the coordinates to screen size
-            const cx = landmarks[9].x * canvas.width;
-            const cy = landmarks[9].y * canvas.height;
-            
-            // Text style matching Python's green (0, 255, 0)
-            ctx.fillStyle = 'lime'; 
-            ctx.font = `bold ${Math.round(canvas.height/25)}px Arial`;
-            
-            // Position matches Python's (cx - 30, cy - 30) offset
-            ctx.fillText(String(fingers), cx - 30, cy - 30);
-        }
-    }
-    
-    // --- Draw Total Counts (Matches Python's top-left text) ---
-    
-    // Text style matching Python's blue (255, 0, 0) for the main stats
-    ctx.fillStyle = 'cyan'; 
-    ctx.font = `bold ${Math.round(canvas.height/30)}px Arial`;
+        // Requested positions (10, 30) and (10, 70)
+        ctx.fillText(`Finger Count: ${totalFingers}`, 10, 30); 
+        ctx.fillText(`Hands: ${handCount}`, 10, 70); 
 
-    // Finger Count: (10, 30) position
-    ctx.fillText(`Finger Count: ${totalFingers}`, 10, 40); 
-
-    // Hands: (10, 70) position
-    ctx.fillText(`Hands: ${handCount}`, 10, 80); 
-
-    ctx.restore();
+    }); // End requestAnimationFrame
 });
 
-// --- Camera Initialization (Mirrors Python's `cv2.VideoCapture` setup) ---
+// --- Camera Initialization and Program Start (Unchanged) ---
 
-// Matches Python's resolution setting
-const CAMERA_WIDTH = 1280;
-const CAMERA_HEIGHT = 720;
+const initCamera = () => {
+    camera = new Camera(videoElement, {
+        onFrame: async () => {
+            await hands.send({image: videoElement});
+        },
+        width: videoElement.width, 
+        height: videoElement.height,
+        mirrored: false
+    });
+    camera.start();
+};
 
-// Initializes the camera to feed frames to the Hands model
-const camera = new Camera(videoElement, {
-    onFrame: async () => {
-        // This sends the current frame to the MediaPipe hands processor
-        await hands.send({image: videoElement});
-    },
-    width: CAMERA_WIDTH,  // Matches Python's 1280
-    height: CAMERA_HEIGHT // Matches Python's 720
-});
+// Initial setup
+resizeCanvas();
 
-// Start the camera stream
-camera.start();
+// Starter function for first click to handle fullscreen/permissions
+document.addEventListener('click', function starter() {
+    if (!document.fullscreenElement) {
+        toggleFullscreen(); 
+    }
+    initCamera();
+    document.removeEventListener('click', starter);
+}, {once: true});
 
-// Note: The ESC key exit (cv2.waitKey(1) & 0xFF == 27) is not applicable to a web page.
-// The user closes the tab to stop the script.
+handleFullscreenChange();
 </script>
 </body>
 </html>
